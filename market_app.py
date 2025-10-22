@@ -6,61 +6,82 @@ def get_connection():
         host="localhost",
         database="mzansi_market",
         user="postgres",
-        password="12345"
+        password="mypassword"
     )
-    return conn 
-pass
+    return conn
 
-# Function to add a new stall owner
 def add_stall_owner(name, location):
     try:
-        # Attempt to get a connection (will raise exception if fails)
         conn = get_connection()
         cursor = conn.cursor()
-
-        # Insert new stall owner
-        cursor.execute(
-            "INSERT INTO stall_owners (name, location) VALUES (%s, %s) RETURNING id;",
-            (name, location)
-        )
-        owner_id = cursor.fetchone()[0]  # Get the generated id
+        insert_query = "INSERT INTO Stall_Owners (name, location) VALUES (%s, %s) RETURNING id;"
+        cursor.execute(insert_query, (name, location))
+        owner_id = cursor.fetchone()[0]
         conn.commit()
-        print(f"✅ Stall owner '{name}' added successfully with ID {owner_id}!")
+        print(f"Stall owner '{name}' successfully added with ID {owner_id}.")
         return owner_id
-
     except Exception as e:
-        print("❌ Error adding stall owner:", e)
-
+        print(f"Error adding stall owner: {e}")
+        conn.rollback()
     finally:
-        # Close cursor and connection safely
-        try:
-            cursor.close()
-            conn.close()
-        except:
-            pass
+        cursor.close()
+        conn.close()
 
-        
 
 def add_product(owner_id, name, price, stock):
     try:
         conn = get_connection()
         cursor = conn.cursor()
-
-        # Fetch products for the given owner_id
-        cursor.execute(
-            "SELECT id, name, price, stock FROM products WHERE owner_id = %s;",
-            (owner_id,)
-        )
-        products = cursor.fetchall()
-        return products
-
+        insert_query = "INSERT INTO Products (owner_id, name, price, stock) VALUES (%s, %s, %s, %s) RETURNING id;"
+        cursor.execute(insert_query, (owner_id, name, price, stock))
+        product_id = cursor.fetchone()[0]
+        conn.commit()
+        print(f"Product '{name}' successfully added with ID {product_id}.")
+        return product_id
     except Exception as e:
-        print("❌ Error fetching products:", e)
-        return []
+        print(f"Error adding product: {e}")
+        conn.rollback()
+   
 
-    finally:
-        try:
-            cursor.close()
-            conn.close()
-        except:
-            pass
+
+def make_sale(product_name, quantity):
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        # Reduce stock first
+        update_stock_query = "UPDATE Products SET stock = stock - %s WHERE name = %s;"
+        cursor.execute(update_stock_query, (quantity, product_name))
+        
+        # Insert sale
+        insert_query = "INSERT INTO Sales (product_name, quantity) VALUES (%s, %s) RETURNING id;"
+        cursor.execute(insert_query, (product_name, quantity))
+        sale_id = cursor.fetchone()[0]
+        
+        conn.commit()
+        print(f"Sale made successfully! Sale ID: {sale_id}")
+        return sale_id
+    
+    except Exception as e:
+        print(f"Error making sale: {e}")
+        
+
+def weekly_report():
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        report_query = """
+        SELECT p.name, SUM(s.quantity) AS total_sold, SUM(s.total_amount) AS total_revenue
+        FROM Sales s
+        JOIN Products p ON s.product_id = p.id
+        WHERE s.sale_date >= NOW() - INTERVAL '7 days'
+        GROUP BY p.name;
+        """
+        cursor.execute(report_query)
+        report = cursor.fetchall()
+        print("Weekly report generated successfully!")
+        return report
+    except Exception as e:
+        print(f"Error generating weekly report: {e}")
+        
+        
