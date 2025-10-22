@@ -1,6 +1,7 @@
 import psycopg2
 from db_setup import create_tables
 
+
 def get_connection():
     return psycopg2.connect(
         host="localhost",
@@ -22,14 +23,15 @@ def add_stall_owner(name, location):
         cursor.execute(insert_query, (name, location))
         owner_id = cursor.fetchone()[0]
         conn.commit()
-        print(f"Stall owner '{name}' added successfully with ID {owner_id}.")
+        print(f"✅ Stall owner '{name}' added successfully with ID {owner_id}.")
         return owner_id
     except Exception as e:
-        print(f"Error adding stall owner: {e}")
+        print(f"❌ Error adding stall owner: {e}")
         conn.rollback()
     finally:
         cursor.close()
         conn.close()
+
 
 def add_product(owner_id, name, price, stock):
     try:
@@ -43,11 +45,14 @@ def add_product(owner_id, name, price, stock):
         cursor.execute(insert_query, (owner_id, name, price, stock))
         product_id = cursor.fetchone()[0]
         conn.commit()
-        print(f"Product '{name}' added successfully with ID {product_id}.")
+        print(f"✅ Product '{name}' added successfully with ID {product_id}.")
         return product_id
     except Exception as e:
-        print(f"Error adding product: {e}")
+        print(f"❌ Error adding product: {e}")
         conn.rollback()
+    finally:
+        cursor.close()
+        conn.close()
 
 
 def make_sale(product_name, quantity):
@@ -55,36 +60,34 @@ def make_sale(product_name, quantity):
         conn = get_connection()
         cursor = conn.cursor()
 
-        # Get product price and ID
+        # Get product details
         cursor.execute("SELECT id, price, stock FROM Products WHERE name = %s;", (product_name,))
         product = cursor.fetchone()
 
         if not product:
-            print("Product not found.")
+            print("❌ Product not found.")
             return
         product_id, price, stock = product
 
         if stock < quantity:
-            print("Not enough stock available.")
+            print("⚠️ Not enough stock available.")
             return
 
         total_amount = price * quantity
 
- 
-        update_stock_query = "UPDATE Products SET stock = stock - %s WHERE id = %s;"
-        cursor.execute(update_stock_query, (quantity, product_id))
+        # Update stock
+        cursor.execute("UPDATE Products SET stock = stock - %s WHERE id = %s;", (quantity, product_id))
 
-
-        insert_sale_query = """
+        # Insert sale
+        cursor.execute("""
             INSERT INTO Sales (product_id, quantity, total_amount, sale_date)
             VALUES (%s, %s, %s, NOW())
             RETURNING id;
-        """
-        cursor.execute(insert_sale_query, (product_id, quantity, total_amount))
+        """, (product_id, quantity, total_amount))
         sale_id = cursor.fetchone()[0]
 
         conn.commit()
-        print(f"Sale made successfully! Sale ID: {sale_id}")
+        print(f"✅ Sale made successfully! Sale ID: {sale_id}, Product: '{product_name}', Quantity: {quantity}, Total: R{total_amount:.2f}")
         return sale_id
 
     except Exception as e:
@@ -111,11 +114,36 @@ def weekly_report():
         """
         cursor.execute(report_query)
         report = cursor.fetchall()
-        print("Weekly report generated successfully!")
-        return report
+
+        print("\n📊 Weekly Sales Report:")
+        if not report:
+            print("No sales recorded in the last 7 days.")
+        else:
+            for product_name, total_sold, total_revenue in report:
+                print(f"🛍️ {product_name}: {total_sold} sold | Total Revenue: R{total_revenue:.2f}")
+
     except Exception as e:
-        print(f" Error generating weekly report: {e}")
-        return []
+        print(f"❌ Error generating weekly report: {e}")
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def view_products():
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, name, price, stock FROM Products;")
+        products = cursor.fetchall()
+
+        print("\n📦 Available Products:")
+        if not products:
+            print("No products available.")
+        else:
+            for pid, name, price, stock in products:
+                print(f"ID: {pid} | Name: {name} | Price: R{price:.2f} | Stock: {stock}")
+    except Exception as e:
+        print(f"❌ Error viewing products: {e}")
     finally:
         cursor.close()
         conn.close()
@@ -124,10 +152,7 @@ def weekly_report():
 def main():
     print("🌍 Sawubona! Welcome to Mzansi Market Tracker!")
     create_tables()
-    
-    
 
-    locations = ("Soweto", "Khayelitsha", "Tembisa", "Umlazi")
     menu = {
         "1": "Add Stall Owner",
         "2": "Add Product",
@@ -138,7 +163,7 @@ def main():
     }
 
     while True:
-        print("\n Menu:")
+        print("\n📋 Menu:")
         for key, value in menu.items():
             print(f"{key}. {value}")
 
@@ -147,7 +172,7 @@ def main():
         try:
             if choice == "1":
                 name = input("Enter stall owner name: ")
-                location = input(f"Enter location ({', '.join(locations)}): ")
+                location = input("Enter location: ")
                 add_stall_owner(name, location)
 
             elif choice == "2":
@@ -158,15 +183,7 @@ def main():
                 add_product(owner_id, name, price, stock)
 
             elif choice == "3":
-                conn = get_connection()
-                cursor = conn.cursor()
-                cursor.execute("SELECT * FROM Products;")
-                products = cursor.fetchall()
-                print("\n📦 Products:")
-                for product in products:
-                    print(product)
-                cursor.close()
-                conn.close()
+                view_products()
 
             elif choice == "4":
                 product_name = input("Enter product name: ")
@@ -174,23 +191,18 @@ def main():
                 make_sale(product_name, quantity)
 
             elif choice == "5":
-                report = weekly_report()
-                print("\n Weekly Sales Report:")
-                if not report:
-                    print("No sales in the last 7 days.")
-                else:
-                    for row in report:
-                        print(row)
+                weekly_report()
 
             elif choice == "6":
-                print(" Exiting Mzansi Market Tracker. Hamba kahle!")
+                print("👋 Exiting Mzansi Market Tracker. Hamba kahle!")
                 break
 
             else:
-                print(" Invalid option. Please try again.")
+                print("⚠️ Invalid option. Please try again.")
 
         except Exception as e:
-            print(f" Error: {e}")
+            print(f"❌ Error: {e}")
+
 
 if __name__ == "__main__":
     main()
