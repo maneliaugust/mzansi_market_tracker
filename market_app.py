@@ -1,208 +1,339 @@
 import psycopg2
-from db_setup import create_tables
+from datetime import date
+import csv
+from colorama import Fore, Style
+from db_setup import create_connection, create_tables
+from db_setup import add_stall_owner
+from db_setup import get_product
+from db_setup import get_sale
+from db_setup import get_login
+from db_setup import display_product
+# 
+# Bold text
+BOLD = '\033[1m'
+RESET = Style.RESET_ALL
 
 
-def get_connection():
-    return psycopg2.connect(
-        host="localhost",
-        database="mzansi_market",
-        user="postgres",
-        password="mypassword"
-    )
+def register_stall_owner2():
+    conn = create_connection()
+    cursor = conn.cursor()
+    name = input("👤 Enter your name: ").strip()
+    location = input("📍 Enter your location: ").strip()
+    password = input("🔑 Create a password: ").strip()
 
-
-def add_stall_owner(name, location):
     try:
-        conn = get_connection()
-        cursor = conn.cursor()
-        insert_query = """
-            INSERT INTO Stall_Owners (name, location)
-            VALUES (%s, %s)
-            RETURNING id;
-        """
-        cursor.execute(insert_query, (name, location))
-        owner_id = cursor.fetchone()[0]
+        # cursor.execute("""
+        #     INSERT INTO Stall_Owners (name, location, password)
+        #     VALUES (%s, %s, %s)
+        # """, (name, location, password))
+        
+        add_stall_owner(cursor, name, location, password)
+        
         conn.commit()
-        print(f"✅ Stall owner '{name}' added successfully with ID {owner_id}.")
-        return owner_id
-    except Exception as e:
-        print(f"❌ Error adding stall owner: {e}")
+        print(Fore.GREEN + "✅ Registration successful! You can now log in." + RESET)
+    except psycopg2.errors.UniqueViolation:
+        print(Fore.RED + "❌ Name already exists. Try a different name." + RESET)
         conn.rollback()
+    except Exception as e:
+        print(Fore.RED + f"❌ Error registering: {e}" + RESET)
     finally:
         cursor.close()
         conn.close()
 
 
-def add_product(owner_id, name, price, stock):
+def login_stall_owner():
+    conn = create_connection()
+    cursor = conn.cursor()
+    name = input("👤 Enter your name: ").strip()
+    password = input("🔑 Enter your password: ").strip()
+
     try:
-        conn = get_connection()
-        cursor = conn.cursor()
-        insert_query = """
-            INSERT INTO Products (owner_id, name, price, stock)
-            VALUES (%s, %s, %s, %s)
-            RETURNING id;
-        """
-        cursor.execute(insert_query, (owner_id, name, price, stock))
-        product_id = cursor.fetchone()[0]
-        conn.commit()
-        print(f"✅ Product '{name}' added successfully with ID {product_id}.")
-        return product_id
-    except Exception as e:
-        print(f"❌ Error adding product: {e}")
-        conn.rollback()
-    finally:
-        cursor.close()
-        conn.close()
+        # cursor.execute("""
+        #     SELECT * FROM Stall_Owners 
+        #     WHERE LOWER(name) = LOWER(%s) AND password = %s
+        # """, (name, password))
+        
+        get_login(cursor,name, password)
+        owner = cursor.fetchone()
 
-
-def make_sale(product_name, quantity):
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
-
-        # Get product details
-        cursor.execute("SELECT id, price, stock FROM Products WHERE name = %s;", (product_name,))
-        product = cursor.fetchone()
-
-        if not product:
-            print("❌ Product not found.")
-            return
-        product_id, price, stock = product
-
-        if stock < quantity:
-            print("⚠️ Not enough stock available.")
-            return
-
-        total_amount = price * quantity
-
-        # Update stock
-        cursor.execute("UPDATE Products SET stock = stock - %s WHERE id = %s;", (quantity, product_id))
-
-        # Insert sale
-        cursor.execute("""
-            INSERT INTO Sales (product_id, quantity, total_amount, sale_date)
-            VALUES (%s, %s, %s, NOW())
-            RETURNING id;
-        """, (product_id, quantity, total_amount))
-        sale_id = cursor.fetchone()[0]
-
-        conn.commit()
-        print(f"✅ Sale made successfully! Sale ID: {sale_id}, Product: '{product_name}', Quantity: {quantity}, Total: R{total_amount:.2f}")
-        return sale_id
-
-    except Exception as e:
-        print(f"❌ Error making sale: {e}")
-        conn.rollback()
-    finally:
-        cursor.close()
-        conn.close()
-
-
-def weekly_report():
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
-        report_query = """
-            SELECT 
-                p.name AS product_name,
-                SUM(s.quantity) AS total_sold,
-                SUM(s.total_amount) AS total_revenue
-            FROM Sales s
-            JOIN Products p ON s.product_id = p.id
-            WHERE s.sale_date >= NOW() - INTERVAL '7 days'
-            GROUP BY p.name;
-        """
-        cursor.execute(report_query)
-        report = cursor.fetchall()
-
-        print("\n📊 Weekly Sales Report:")
-        if not report:
-            print("No sales recorded in the last 7 days.")
+        if owner:
+            print(Fore.GREEN + f"🎉 Welcome back, {owner[1]}!" + RESET)
+            return owner
         else:
-            for product_name, total_sold, total_revenue in report:
-                print(f"🛍️ {product_name}: {total_sold} sold | Total Revenue: R{total_revenue:.2f}")
-
+            print(Fore.RED + "❌ Invalid login credentials." + RESET)
+            return None
     except Exception as e:
-        print(f"❌ Error generating weekly report: {e}")
+        print(Fore.RED + f"❌ Error during login: {e}" + RESET)
+        return None
     finally:
         cursor.close()
         conn.close()
 
 
-def view_products():
+def get_product2(owner_id=None):
+    conn = create_connection()
+    cursor = conn.cursor()
+    name = input("🛒 Enter product name: ").strip()
+    price = float(input("💰 Enter product price: "))
+    stock = int(input("📦 Enter product stock: "))
+    if owner_id is None:
+        owner_id = int(input("🧾 Enter owner ID: "))
+
     try:
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, name, price, stock FROM Products;")
+        # cursor.execute("""
+        #     INSERT INTO Products (name, price, stock, owner_id)
+        #     VALUES (%s, %s, %s, %s)
+        # """, (name, price, stock, owner_id))
+        get_product(cursor, name, price, stock, owner_id)
+        
+        conn.commit()
+        print(Fore.GREEN + "✅ Product added successfully!" + RESET)
+    except Exception as e:
+        print(Fore.RED + f"❌ Error adding product: {e}" + RESET)
+    finally:
+        cursor.close()
+        conn.close()
+
+
+
+def view_my_products(owner_id):
+    conn = create_connection()
+    cursor = conn.cursor()
+    try:
+        # cursor.execute("""
+        #     SELECT name, price, stock FROM Products WHERE owner_id = %s
+        # """, (owner_id,))
+        display_product(cursor, owner_id)
         products = cursor.fetchall()
-
-        print("\n📦 Available Products:")
-        if not products:
-            print("No products available.")
+        if products:
+            print(Fore.CYAN + BOLD + "\n📋 Your Products:" + RESET)
+            for p in products:
+                print(f"🛒 {p[0]} | 💰 {p[1]} | 📦 {p[2]}")
         else:
-            for pid, name, price, stock in products:
-                print(f"ID: {pid} | Name: {name} | Price: R{price:.2f} | Stock: {stock}")
+            print(Fore.YELLOW + "ℹ️ No products found." + RESET)
     except Exception as e:
-        print(f"❌ Error viewing products: {e}")
+        print(Fore.RED + f"❌ Error fetching products: {e}" + RESET)
+    finally:
+        cursor.close()
+        conn.close()
+        
+        
+        
+
+def search_product():
+    conn = create_connection()
+    cursor = conn.cursor()
+    keyword = input("🔍 Enter product name to search: ").strip()
+
+    try:
+        cursor.execute("""
+            SELECT p.name, p.price, p.stock, s.name AS owner_name
+            FROM Products p
+            JOIN Stall_Owners s ON p.owner_id = s.id
+            WHERE LOWER(p.name) LIKE LOWER(%s)
+        
+        """, (f"%{keyword}%",))
+        results = cursor.fetchall()
+        if results:
+            print(Fore.CYAN + BOLD + "\n📋 Search Results:" + RESET)
+            for r in results:
+                print(f"🛒 {r[0]} | 💰 {r[1]} | 📦 {r[2]} | 🧑 Owner: {r[3]}")
+        else:
+            print(Fore.YELLOW + "ℹ️ No products found." + RESET)
+    except Exception as e:
+        print(Fore.RED + f"❌ Error searching products: {e}" + RESET)
+    finally:
+        cursor.close()
+        conn.close()
+
+# -- Weekly Report Functions --
+def generate_weekly_report():
+    conn = create_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            SELECT p.name, s.name AS owner_name, SUM(sa.quantity) AS total_sold,
+                   SUM(sa.quantity * p.price) AS total_revenue
+            FROM Sales sa
+            JOIN Products p ON sa.product_id = p.id
+            JOIN Stall_Owners s ON p.owner_id = s.id
+            WHERE sa.sale_date >= current_date - interval '7 days'
+            GROUP BY p.name, s.name
+            ORDER BY total_sold DESC
+        """)
+        report = cursor.fetchall()
+        if report:
+            print(Fore.CYAN + BOLD + "\n📊 Weekly Sales Report:" + RESET)
+            print(Fore.YELLOW + "Product | Owner | Total Sold | Total Revenue" + RESET)
+            for r in report:
+                print(f"{r[0]} | {r[1]} | {r[2]} | {r[3]}")
+        else:
+            print(Fore.YELLOW + "ℹ️ No sales in the past week." + RESET)
+        return report
+    except Exception as e:
+        print(Fore.RED + f"❌ Error generating weekly report: {e}" + RESET)
+        return []
+    finally:
+        cursor.close()
+        conn.close()
+        
+        
+# -- Make Sale --
+def make_sale():
+    conn = create_connection()
+    cursor = conn.cursor()
+    try:
+        # Show all products
+        # cursor.execute("""
+        #     SELECT p.id, p.name, p.price, p.stock, s.name AS owner_name
+        #     FROM Products p
+        #     JOIN Stall_Owners s ON p.owner_id = s.id
+        # """)
+        products = cursor.fetchall()
+        if not products:
+            print(Fore.YELLOW + "ℹ️ No products available for sale." + RESET)
+            return
+
+        print(Fore.CYAN + BOLD + "\n📋 Available Products:" + RESET)
+        for p in products:
+            print(f"ID: {p[0]} | 🛒 {p[1]} | 💰 {p[2]} | 📦 Stock: {p[3]} | 🧑 Owner: {p[4]}")
+
+        product_id = int(input("🆔 Enter Product ID to sell: "))
+        quantity = int(input("📦 Enter quantity to sell: "))
+
+        # Check stock and get price
+        cursor.execute("SELECT stock, price FROM Products WHERE id=%s", (product_id,))
+        product = cursor.fetchone()
+        if not product:
+            print(Fore.RED + "❌ Product not found." + RESET)
+            return
+        stock, price = product
+        if stock < quantity:
+            print(Fore.RED + "❌ Not enough stock available." + RESET)
+            return
+
+        total_amount = quantity * price
+
+        # Deduct stock
+      
+        # Insert into Sales table including total_amount
+        # cursor.execute("""
+        #     INSERT INTO Sales (product_id, quantity, total_amount, sale_date)
+        #     VALUES (%s, %s, %s, CURRENT_DATE)
+        # """, (product_id, quantity, total_amount))
+        get_sale(cursor, product_id, quantity, total_amount)
+        
+    
+        conn.commit()
+        print(Fore.GREEN + f"✅ Sale recorded successfully! {quantity} unit(s) sold for R{total_amount}." + RESET)
+
+    except Exception as e:
+        print(Fore.RED + f"❌ Error making sale: {e}" + RESET)
+        conn.rollback()
     finally:
         cursor.close()
         conn.close()
 
 
-def main():
-    print("🌍 Sawubona! Welcome to Mzansi Market Tracker!")
-    create_tables()
 
-    menu = {
-        "1": "Add Stall Owner",
-        "2": "Add Product",
-        "3": "View Products",
-        "4": "Make Sale",
-        "5": "Weekly Report",
-        "6": "Exit"
-    }
 
+def export_weekly_report_csv():
+    report = generate_weekly_report()
+    if not report:
+        print(Fore.YELLOW + "ℹ️ No data to export." + RESET)
+        return
+
+    filename = f"weekly_report_{date.today()}.csv"
+    try:
+        with open(filename, mode='w', newline='') as file:
+            writer = csv.writer(file)
+            writer.writerow(["Product", "Owner", "Total Sold", "Total Revenue"])
+            for r in report:
+                writer.writerow(r)
+        print(Fore.GREEN + f"✅ Weekly report exported to {filename}" + RESET)
+    except Exception as e:
+        print(Fore.RED + f"❌ Error exporting CSV: {e}" + RESET)
+
+# -- Dashboard ----
+def user_dashboard(user):
     while True:
-        print("\n📋 Menu:")
-        for key, value in menu.items():
-            print(f"{key}. {value}")
+        print("\n" + BOLD + f"===== 🏠 Welcome {user[1]} Dashboard =====" + RESET)
+        print(Fore.YELLOW + BOLD + " 1️⃣  Add Product 🛒" + RESET)
+        print(Fore.YELLOW + BOLD + " 2️⃣  View My Products 👀" + RESET)
+        print(Fore.YELLOW + BOLD + " 3️⃣  Logout 🔐" + RESET)
 
-        choice = input("Select an option: ").strip()
+        choice = input(Fore.CYAN + BOLD + "\n👉 Enter your choice: " + RESET).strip()
+        if choice == "1":
+            get_product2(owner_id=user[0])
+        elif choice == "2":
+            view_my_products(user[0])
+        elif choice == "3":
+            print(Fore.GREEN + "👋 Logging out..." + RESET)
+            break
+        else:
+            print(Fore.RED + "❌ Invalid option. Try again." + RESET)
 
-        try:
-            if choice == "1":
-                name = input("Enter stall owner name: ")
-                location = input("Enter location: ")
-                add_stall_owner(name, location)
+# -- Menus ---
+def login_menu():
+    while True:
+        print("\n" + BOLD + "===== 🔐 Login Menu =====" + RESET)
+        print(Fore.MAGENTA + BOLD + " 1️⃣ Register" + RESET)
+        print(Fore.MAGENTA + BOLD + " 2️⃣ Login" + RESET)
+        print(Fore.MAGENTA + BOLD + " 3️⃣ Back to Main Menu" + RESET)
 
-            elif choice == "2":
-                owner_id = input("Enter stall owner ID: ")
-                name = input("Enter product name: ")
-                price = float(input("Enter product price: "))
-                stock = int(input("Enter product stock: "))
-                add_product(owner_id, name, price, stock)
+        choice = input(Fore.CYAN + BOLD + "\n👉 Enter your choice: " + RESET).strip()
+        if choice == "1":
+            register_stall_owner2()  # Changed from add_stall_owner() to register_stall_owner2()
+        elif choice == "2":
+            user = login_stall_owner()
+            if user:
+                user_dashboard(user)
+        elif choice == "3":
+            break
+        else:
+            print(Fore.RED + BOLD + "❌ Invalid option. Try again." + RESET)
 
-            elif choice == "3":
-                view_products()
+# -- Main Menu --
+def main():
+    print(Fore.CYAN + BOLD + "\n🌍 SAWUBONA! WELCOME TO MZANSI MARKET TRACKER!" + RESET)
+    create_tables()
+    while True:
+        print("\n" + BOLD + "="*60 + RESET)
+        print(Fore.YELLOW + BOLD + "            🛍️  MZANSI MARKET MENU  🛍️" + RESET)
+        print(BOLD + "="*60 + RESET)
 
-            elif choice == "4":
-                product_name = input("Enter product name: ")
-                quantity = int(input("Enter quantity sold: "))
-                make_sale(product_name, quantity)
+        print(Fore.YELLOW + BOLD + "  1️⃣  ADD STALL OWNER 📝" + RESET)
+        print(Fore.YELLOW + BOLD + "  2️⃣  LOGIN 🔐" + RESET)
+        print(Fore.YELLOW + BOLD + "  3️⃣  ADD PRODUCT 🛒" + RESET)
+        print(Fore.YELLOW + BOLD + "  4️⃣  VIEW PRODUCTS 👀" + RESET)
+        print(Fore.YELLOW + BOLD + "  5️⃣  MAKE SALE 💸" + RESET)
+        print(Fore.YELLOW + BOLD + "  6️⃣  WEEKLY REPORT 📊" + RESET)
+        print(Fore.YELLOW + BOLD + "  7️⃣  EXPORT WEEKLY REPORT TO CSV 📁" + RESET)
+        print(Fore.YELLOW + BOLD + "  8️⃣  SEARCH PRODUCT 🔍" + RESET)
+        print(Fore.YELLOW + BOLD + "  9️⃣  EXIT 🚪" + RESET)
+        print(BOLD + "="*60 + RESET)
 
-            elif choice == "5":
-                weekly_report()
-
-            elif choice == "6":
-                print("👋 Exiting Mzansi Market Tracker. Hamba kahle!")
-                break
-
-            else:
-                print("⚠️ Invalid option. Please try again.")
-
-        except Exception as e:
-            print(f"❌ Error: {e}")
-
+        choice = input(Fore.CYAN + BOLD + "\n👉 ENTER YOUR CHOICE: " + RESET).strip()
+        if choice == "1":
+            register_stall_owner2()
+        elif choice == "2":
+            login_menu()
+        elif choice == "3":
+            get_product2()
+        elif choice == "5":
+            make_sale()
+        elif choice == "6":
+            generate_weekly_report()
+        elif choice == "7":
+            export_weekly_report_csv()
+        elif choice == "8":
+            search_product()
+        elif choice == "9":
+            print(Fore.GREEN + BOLD + "👋 GOODBYE! THANKS FOR USING MZANSI MARKET TRACKER!" + RESET)
+            break
+        else:
+            print(Fore.RED + BOLD + "❌ INVALID MENU OPTION. TRY AGAIN." + RESET)
+            
 
 if __name__ == "__main__":
     main()
